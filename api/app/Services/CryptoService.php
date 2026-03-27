@@ -9,10 +9,17 @@ class CryptoService
 {
     public function fetchAndStorePrices(): void
     {
-        $response = Http::get('https://api.coingecko.com/api/v3/simple/price?vs_currencies=usd&ids=bitcoin&x_cg_demo_api_key=' . env('COINGECKO_API_KEY'));
+        $cryptos = config('crypto.ids');
+        $cryptoIds = implode(',', $cryptos);
+        
+        $response = Http::get('https://api.coingecko.com/api/v3/simple/price', [
+            'vs_currencies' => 'usd',
+            'ids' => $cryptoIds,
+            'x_cg_demo_api_key' => env('COINGECKO_API_KEY'),
+        ]);
 
         if ($response->ok()) {
-            Redis::set('crypto_prices', json_encode($response->json()), 'EX', 3600); // Cache for 1 hour
+            Redis::set('crypto_prices', json_encode($response->json()), 'EX', 3600);
         }
     }
 
