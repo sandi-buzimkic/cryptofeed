@@ -74,7 +74,7 @@ export default function App() {
             </Text>
             <TouchableOpacity onPress={() => Linking.openURL('https://www.coingecko.com/en/api')}>
               <Image
-                source={require('./images/CGAPI-Lockup@2x-1.png')}
+                source={require('./assets/CGAPI-Lockup@2x-1.png')}
                 style={{ width: 100, height: 25 }}
                 resizeMode="contain"
               />
