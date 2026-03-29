@@ -3,19 +3,18 @@
 namespace App\Http\Controllers;
 
 use App\Models\Watchlist;
+use App\Services\CryptoService;
 use Illuminate\Http\Request;
 
 class WatchlistController extends Controller
 {
-    // Get all coins the user follows
     public function index(Request $request)
     {
         $coins = $request->user()->watchlist()->pluck('coin_id');
         return response()->json($coins);
     }
 
-    // Follow a coin
-    public function store(Request $request)
+    public function store(Request $request, CryptoService $crypto)
     {
         $request->validate(['coin_id' => 'required|string']);
 
@@ -24,10 +23,12 @@ class WatchlistController extends Controller
             'coin_id' => $request->coin_id,
         ]);
 
+        // Immediately cache this coin if it's not already in Redis
+        $crypto->getPricesForCoins([$request->coin_id]);
+
         return response()->json(['following' => true, 'coin_id' => $entry->coin_id], 201);
     }
 
-    // Unfollow a coin
     public function destroy(Request $request, string $coinId)
     {
         $request->user()->watchlist()->where('coin_id', $coinId)->delete();

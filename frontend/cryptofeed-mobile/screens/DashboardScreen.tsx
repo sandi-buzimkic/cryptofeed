@@ -5,7 +5,7 @@ import {
   ScrollView, Pressable
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { LineChart } from 'react-native-gifted-charts';
+import Svg, { Path, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { Colors } from '../constants/theme';
 import { COIN_META } from '../constants/crypto';
 
@@ -13,6 +13,55 @@ const API = `${process.env.EXPO_PUBLIC_API_URL}/api`;
 
 type PriceData = Record<string, { usd: number }>;
 type CoinResult = { id: string; name: string; symbol: string; thumb: string };
+
+const formatPrice = (price: number): string => {
+  if (price >= 1000)   return price.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (price >= 1)      return price.toFixed(2);
+  if (price >= 0.01)   return price.toFixed(4);
+  if (price >= 0.0001) return price.toFixed(6);
+  return price.toFixed(8);
+};
+
+function PriceChart({ data, color }: { data: { x: number; y: number }[], color: string }) {
+  const width  = 320;
+  const height = 160;
+  const prices = data.map(d => d.y);
+  const min    = Math.min(...prices);
+  const max    = Math.max(...prices);
+  const range  = max - min || 1;
+
+  const toX = (i: number) => (i / (data.length - 1)) * width;
+  const toY = (v: number) => height - ((v - min) / range) * height * 0.85 - height * 0.05;
+
+  const linePath = data
+    .map((d, i) => `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(d.y).toFixed(1)}`)
+    .join(' ');
+
+  const areaPath = `${linePath} L${width},${height} L0,${height} Z`;
+
+  return (
+    <Svg width={width} height={height}>
+      <Defs>
+        <LinearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor={color} stopOpacity="0.3" />
+          <Stop offset="1" stopColor={color} stopOpacity="0" />
+        </LinearGradient>
+      </Defs>
+      <Path d={areaPath} fill="url(#grad)" />
+      <Path d={linePath} stroke={color} strokeWidth="2" fill="none" />
+    </Svg>
+  );
+}
+
+function yLabels(data: { x: number; y: number }[], count = 5): string[] {
+  const prices = data.map(d => d.y);
+  const min    = Math.min(...prices);
+  const max    = Math.max(...prices);
+  return Array.from({ length: count }, (_, i) => {
+    const val = min + ((max - min) / (count - 1)) * i;
+    return '$' + formatPrice(val);
+  }).reverse();
+}
 
 export default function DashboardScreen() {
   const [prices, setPrices]               = useState<PriceData>({});
@@ -24,7 +73,7 @@ export default function DashboardScreen() {
   const [watchlist, setWatchlist]         = useState<string[]>([]);
   const [token, setToken]                 = useState<string | null>(null);
   const [selectedCoin, setSelectedCoin]   = useState<CoinResult | null>(null);
-  const [priceHistory, setPriceHistory]   = useState<{ value: number }[]>([]);
+  const [priceHistory, setPriceHistory]   = useState<{ x: number; y: number }[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
   useEffect(() => {
@@ -44,12 +93,11 @@ export default function DashboardScreen() {
       setRefreshing(false);
     }
   };
-  
-  const eraseSearch = async () => {
+
+  const eraseSearch = () => {
     setSearchQuery('');
     setSearchResults([]);
   };
-
 
   useEffect(() => {
     fetchPrices();
@@ -89,7 +137,7 @@ export default function DashboardScreen() {
     try {
       const res = await fetch(`${API}/history/${coin.id}`);
       const data: [number, number][] = await res.json();
-      setPriceHistory(data.map(([, price]) => ({ value: price })));
+      setPriceHistory(data.map(([timestamp, price]) => ({ x: timestamp, y: price })));
     } catch (e) {
     } finally {
       setLoadingHistory(false);
@@ -112,10 +160,7 @@ export default function DashboardScreen() {
         body: JSON.stringify({ coin_id: coinId }),
       });
       setWatchlist(prev => [...prev, coinId]);
-      // Trigger a background price fetch so the new coin gets into Redis
-      fetch(`${API}/watchlist/prices`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then(() => fetchPrices());
+      await fetchPrices();
     }
   };
 
@@ -136,7 +181,7 @@ export default function DashboardScreen() {
         <View style={styles.cardRight}>
           {showPrice && (
             price !== undefined
-              ? <Text style={styles.price}>${price.toLocaleString()}</Text>
+              ? <Text style={styles.price}>${formatPrice(price)}</Text>
               : <ActivityIndicator size="small" color={Colors.primary} />
           )}
           {isFollowing && <Text style={styles.followingBadge}>● Following</Text>}
@@ -145,13 +190,11 @@ export default function DashboardScreen() {
     );
   };
 
-  // Coins from Redis cache — used as "popular" suggestions when search bar is focused
   const trendingCoins: CoinResult[] = Object.keys(prices).map(id => {
     const meta = COIN_META[id] ?? { label: id, symbol: id.toUpperCase() };
     return { id, name: meta.label, symbol: meta.symbol, thumb: '' };
   });
 
-  // Followed coins built from watchlist + prices already in Redis
   const followedCoins: CoinResult[] = watchlist.map(id => {
     const meta = COIN_META[id] ?? { label: id, symbol: id.toUpperCase() };
     return { id, name: meta.label, symbol: meta.symbol, thumb: '' };
@@ -184,8 +227,8 @@ export default function DashboardScreen() {
           <ActivityIndicator size="small" color={Colors.primary} style={styles.searchSpinner} />
         )}
         {searchQuery !== '' && (
-          <TouchableOpacity style={styles.button} onPress={() => eraseSearch()}>
-            <Text >x</Text>
+          <TouchableOpacity onPress={eraseSearch} style={styles.clearButton}>
+            <Text style={styles.clearButtonText}>✕</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -200,7 +243,6 @@ export default function DashboardScreen() {
         }
       >
         {searchQuery.trim() === '' ? (
-          // Default view — followed coins only
           token ? (
             followedCoins.length === 0 ? (
               <Text style={styles.emptyText}>
@@ -210,49 +252,32 @@ export default function DashboardScreen() {
               followedCoins.map(coin => renderCoinRow(coin, prices[coin.id]?.usd))
             )
           ) : (
-            // Logged out — show trending as a preview
             <>
               <Text style={styles.sectionHeader}>Trending</Text>
               {trendingCoins.map(coin => renderCoinRow(coin, prices[coin.id]?.usd))}
             </>
           )
         ) : (
-          // Search active
           <>
-            {/* No query yet — show popular cached coins as suggestions */}
-            {searchQuery.trim().length === 0 && (
-              <>
-                <Text style={styles.sectionHeader}>Popular</Text>
-                {trendingCoins.map(coin => renderCoinRow(coin, prices[coin.id]?.usd))}
-              </>
-            )}
-
             {followingResults.length > 0 && (
               <>
                 <Text style={styles.sectionHeader}>Following</Text>
-                {followingResults.map(coin =>
-                  renderCoinRow(coin, prices[coin.id]?.usd)
-                )}
+                {followingResults.map(coin => renderCoinRow(coin, prices[coin.id]?.usd))}
               </>
             )}
-
             {discoverResults.length > 0 && (
               <>
                 <Text style={styles.sectionHeader}>Discover</Text>
-                {discoverResults.map(coin =>
-                  renderCoinRow(coin, prices[coin.id]?.usd, false)
-                )}
+                {discoverResults.map(coin => renderCoinRow(coin, prices[coin.id]?.usd, false))}
               </>
             )}
-
-            {searchResults.length === 0 && !searching && searchQuery.trim().length > 0 && (
+            {searchResults.length === 0 && !searching && (
               <Text style={styles.emptyText}>No results found</Text>
             )}
           </>
         )}
       </ScrollView>
 
-      {/* Coin detail modal */}
       <Modal
         visible={!!selectedCoin}
         animationType="slide"
@@ -273,35 +298,23 @@ export default function DashboardScreen() {
                     <Text style={styles.modalCoinSymbol}>{selectedCoin.symbol.toUpperCase()}</Text>
                   </View>
                   {currentPrice !== undefined && (
-                    <Text style={styles.modalPrice}>${currentPrice.toLocaleString()}</Text>
+                    <Text style={styles.modalPrice}>${formatPrice(currentPrice)}</Text>
                   )}
                 </View>
 
                 {loadingHistory ? (
                   <ActivityIndicator color={Colors.primary} style={{ marginVertical: 40 }} />
                 ) : priceHistory.length > 0 ? (
-                  <View style={{ marginVertical: 20 }}>
+                  <View style={{ marginVertical: 10 }}>
                     <Text style={styles.chartLabel}>7-day price</Text>
-                    <LineChart
-                      data={priceHistory}
-                      width={320}
-                      height={180}
-                      color={Colors.primary}
-                      thickness={2}
-                      hideDataPoints
-                      hideYAxisText
-                      xAxisColor="transparent"
-                      yAxisColor="transparent"
-                      backgroundColor="transparent"
-                      noOfSections={4}
-                      rulesColor="#2a2a2a"
-                      rulesType="solid"
-                      areaChart
-                      startFillColor={Colors.primary}
-                      endFillColor="transparent"
-                      startOpacity={0.2}
-                      endOpacity={0}
-                    />
+                    <View style={{ flexDirection: 'row' }}>
+                      <View style={{ justifyContent: 'space-between', height: 160, paddingRight: 6 }}>
+                        {yLabels(priceHistory).map((label, i) => (
+                          <Text key={i} style={styles.yLabel}>{label}</Text>
+                        ))}
+                      </View>
+                      <PriceChart data={priceHistory} color={Colors.primary} />
+                    </View>
                   </View>
                 ) : null}
 
@@ -340,6 +353,8 @@ const styles = StyleSheet.create({
   searchContainer: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 10, backgroundColor: '#1e1e1e', borderRadius: 12, paddingHorizontal: 14 },
   searchInput:     { flex: 1, color: Colors.text, fontSize: 15, paddingVertical: 12 },
   searchSpinner:   { marginLeft: 8 },
+  clearButton:     { width: 20, height: 20, borderRadius: 10, backgroundColor: '#444', alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
+  clearButtonText: { color: '#aaa', fontSize: 11, fontWeight: 'bold', lineHeight: 13 },
 
   sectionHeader: { color: Colors.textMuted, fontSize: 13, fontWeight: '600', marginHorizontal: 16, marginTop: 16, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.8 },
   emptyText:     { color: Colors.textMuted, textAlign: 'center', marginTop: 40, marginHorizontal: 30, lineHeight: 22 },
@@ -362,11 +377,10 @@ const styles = StyleSheet.create({
   modalCoinSymbol: { color: Colors.textMuted, fontSize: 14 },
   modalPrice:      { color: Colors.primary, fontSize: 22, fontWeight: 'bold', marginLeft: 'auto' },
   chartLabel:      { color: Colors.textMuted, fontSize: 13, marginBottom: 6 },
+  yLabel:          { color: Colors.textMuted, fontSize: 10, textAlign: 'right' },
 
   followButton:     { backgroundColor: Colors.primary, padding: 14, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   unfollowButton:   { backgroundColor: '#2a2a2a' },
   followButtonText: { color: '#000', fontWeight: 'bold', fontSize: 15 },
   loginPrompt:      { color: Colors.textMuted, textAlign: 'center', marginTop: 16, fontSize: 13 },
-
-  button: { backgroundColor: Colors.textMuted, paddingVertical: 5, paddingHorizontal: 10, borderRadius: 50 },
 });
