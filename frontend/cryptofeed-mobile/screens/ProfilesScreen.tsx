@@ -1,24 +1,97 @@
-import React, { useState } from 'react';
-import { 
-  View, Text, StyleSheet, TouchableOpacity, 
-  SafeAreaView, Image, Modal, TextInput, 
-  KeyboardAvoidingView, Platform, Pressable 
+import React, { useState, useEffect } from 'react';
+import {
+  View, Text, StyleSheet, TouchableOpacity,
+  SafeAreaView, Image, Modal, TextInput,
+  KeyboardAvoidingView, Platform, Pressable, ActivityIndicator, Alert
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
+
+
+const API_URL = `${process.env.EXPO_PUBLIC_API_URL}/api`;
+const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
 export default function ProfileScreen() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [loading, setLoading] = useState(false);
 
-  // Form States
+  const [username, setUsername] = useState('');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
-  const handleAuthSuccess = () => {
+  useEffect(() => {
+    AsyncStorage.multiGet(['token', 'username']).then(stores => {
+        const token = stores[0][1];
+        const savedUsername = stores[1][1];
+        if (token) {
+            setIsLoggedIn(true);
+            setUsername(savedUsername ?? '');
+        }
+    });
+}, []);
+  
+
+  const handleAuth = async () => {
+  if (!email.trim() || !password.trim()) {
+    return Alert.alert('Error', 'Please fill in all fields.');
+  }
+  if (!isValidEmail(email)) {
+    return Alert.alert('Error', 'Please enter a valid email address.');
+  }
+  if (authMode === 'signup') {
+    if (!name.trim()) return Alert.alert('Error', 'Name is required.');
+    if (password !== confirmPassword) return Alert.alert('Error', 'Passwords do not match.');
+  }
+
+  setLoading(true);
+  try {
+    const endpoint = authMode === 'login' ? '/login' : '/register';
+    const body: any = { email, password };
+    if (authMode === 'signup') {
+      body.name = name;
+      body.password_confirmation = confirmPassword;
+    }
+
+    const res = await fetch(`${API_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      const message = data.message || JSON.stringify(data.errors);
+      return Alert.alert('Error', message);
+    }
+
+    await AsyncStorage.setItem('token', data.token);
+    setUsername(data.user.name);
     setIsLoggedIn(true);
     setShowAuthModal(false);
+
+    await AsyncStorage.setItem('token', data.token);
+    await AsyncStorage.setItem('username', data.user.name);
+  } catch (e) {
+    Alert.alert('Error', 'Could not connect to server.');
+  } finally {
+    setLoading(false);
+  }
+};
+
+  const handleLogout = async () => {
+    const token = await AsyncStorage.getItem('token');
+    await fetch(`${API_URL}/logout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    await AsyncStorage.multiRemove(['token', 'username']);
+    setIsLoggedIn(false);
   };
 
   return (
@@ -28,12 +101,12 @@ export default function ProfileScreen() {
 
         {isLoggedIn ? (
           <View style={styles.profileCard}>
-            <Image 
-              source={{ uri: 'https://ui-avatars.com/api/?name=User&background=00ff88&color=000' }} 
-              style={styles.avatar} 
+            <Image
+              source={{ uri: `https://ui-avatars.com/api/?name=${username}&background=00ff88&color=000` }}
+              style={styles.avatar}
             />
-            <Text style={styles.username}>@crypto_trader</Text>
-            <TouchableOpacity style={styles.logoutButton} onPress={() => setIsLoggedIn(false)}>
+            <Text style={styles.username}>@{username}</Text>
+            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
               <Text style={styles.logoutText}>Log Out</Text>
             </TouchableOpacity>
           </View>
@@ -41,29 +114,16 @@ export default function ProfileScreen() {
           <View style={styles.loginBox}>
             <Ionicons name="person-circle-outline" size={80} color={Colors.textMuted} />
             <Text style={styles.infoText}>Sign in to sync your portfolio across devices.</Text>
-            <TouchableOpacity 
-              style={styles.button} 
-              onPress={() => setShowAuthModal(true)}
-            >
+            <TouchableOpacity style={styles.button} onPress={() => setShowAuthModal(true)}>
               <Text style={styles.buttonText}>Get Started</Text>
             </TouchableOpacity>
           </View>
         )}
       </View>
 
-      {/* --- AUTH MODAL --- */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={showAuthModal}
-        onRequestClose={() => setShowAuthModal(false)}
-      >
+      <Modal animationType="slide" transparent visible={showAuthModal} onRequestClose={() => setShowAuthModal(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => setShowAuthModal(false)}>
-          <KeyboardAvoidingView 
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.modalContent}
-          >
-            {/* Prevent closing when clicking inside the modal */}
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalContent}>
             <Pressable style={styles.modalInner} onPress={(e) => e.stopPropagation()}>
               <View style={styles.modalHeader}>
                 <TouchableOpacity onPress={() => setAuthMode('login')}>
@@ -75,38 +135,25 @@ export default function ProfileScreen() {
               </View>
 
               <View style={styles.inputContainer}>
-                <TextInput 
-                  style={styles.input}
-                  placeholder="Email"
-                  placeholderTextColor="#666"
-                  value={email}
-                  onChangeText={setEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-                <TextInput 
-                  style={styles.input}
-                  placeholder="Password"
-                  placeholderTextColor="#666"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                />
-                
                 {authMode === 'signup' && (
-                  <TextInput 
-                    style={styles.input}
-                    placeholder="Confirm Password"
-                    placeholderTextColor="#666"
-                    secureTextEntry
-                  />
+                  <TextInput style={styles.input} placeholder="Name" placeholderTextColor="#666"
+                    value={name} onChangeText={setName} />
+                )}
+                <TextInput style={styles.input} placeholder="Email" placeholderTextColor="#666"
+                  value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                <TextInput style={styles.input} placeholder="Password" placeholderTextColor="#666"
+                  value={password} onChangeText={setPassword} secureTextEntry />
+                {authMode === 'signup' && (
+                  <TextInput style={styles.input} placeholder="Confirm Password" placeholderTextColor="#666"
+                    value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry />
                 )}
               </View>
 
-              <TouchableOpacity style={styles.submitButton} onPress={handleAuthSuccess}>
-                <Text style={styles.submitButtonText}>
-                  {authMode === 'login' ? 'Sign In' : 'Create Account'}
-                </Text>
+              <TouchableOpacity style={styles.submitButton} onPress={handleAuth} disabled={loading}>
+                {loading
+                  ? <ActivityIndicator color="#000" />
+                  : <Text style={styles.submitButtonText}>{authMode === 'login' ? 'Sign In' : 'Create Account'}</Text>
+                }
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.closeButton} onPress={() => setShowAuthModal(false)}>

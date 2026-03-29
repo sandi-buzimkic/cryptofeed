@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Watchlist;
 use App\Services\CryptoService;
 use Illuminate\Console\Command;
 
@@ -12,7 +13,10 @@ class FetchCryptoPrices extends Command
 
     public function handle(CryptoService $service): int
     {
-        $service->fetchAndStorePrices();
+        // Get all unique coins anyone is following
+        $followedCoins = Watchlist::distinct()->pluck('coin_id')->toArray();
+
+        $service->fetchAndStorePrices($followedCoins);
         $this->info('Crypto prices fetched and stored successfully.');
         return 0;
     }

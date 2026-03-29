@@ -38,6 +38,26 @@ services:
                 - ping
             retries: 3
             timeout: 5s
+    # schedule price fetching
+    scheduler:
+        build:
+            context: './vendor/laravel/sail/runtimes/8.5'
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP}'
+        image: 'sail-8.5/app'
+        environment:
+            WWWUSER: '${WWWUSER}'
+            LARAVEL_SAIL: 1
+        volumes:
+            - '.:/var/www/html'
+        networks:
+            - sail
+        depends_on:
+            - laravel.test
+            - redis
+        command: ["/bin/sh", "-c", "while true; do php artisan schedule:run; sleep $((60 - $(date +%S))); done"]
+
 networks:
     sail:
         driver: bridge
