@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class Watchlist extends Model
 {
     protected $table = 'watchlist';
-    protected $fillable = ['user_id', 'coin_id'];
+    protected $fillable = ['user_id', 'coin_id', 'thumb'];
 
     public function user()
     {

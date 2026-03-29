@@ -1,18 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ActivityIndicator, RefreshControl,
   SafeAreaView, TextInput, TouchableOpacity, Modal, Image,
   ScrollView, Pressable
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Path, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { Colors } from '../constants/theme';
 import { COIN_META } from '../constants/crypto';
 
 const API = `${process.env.EXPO_PUBLIC_API_URL}/api`;
 
-type PriceData = Record<string, { usd: number }>;
-type CoinResult = { id: string; name: string; symbol: string; thumb: string };
+type PriceData      = Record<string, { usd: number }>;
+type CoinResult     = { id: string; name: string; symbol: string; thumb: string };
+type WatchlistEntry = { coin_id: string; thumb: string };
 
 const formatPrice = (price: number): string => {
   if (price >= 1000)   return price.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -23,9 +25,9 @@ const formatPrice = (price: number): string => {
 };
 
 function PriceChart({ data, color }: { data: { x: number; y: number }[], color: string }) {
-  if (data.length < 2) return null; // can't draw a line with less than 2 points
+  if (data.length < 2) return null;
 
-  const width  = 320;
+  const width  = 260;
   const height = 160;
   const prices = data.map(d => d.y);
   const min    = Math.min(...prices);
@@ -73,19 +75,28 @@ export default function DashboardScreen() {
   const [searchQuery, setSearchQuery]     = useState('');
   const [searchResults, setSearchResults] = useState<CoinResult[]>([]);
   const [searching, setSearching]         = useState(false);
-  const [watchlist, setWatchlist]         = useState<string[]>([]);
+  const [watchlist, setWatchlist]         = useState<WatchlistEntry[]>([]);
+  const [togglingCoins, setTogglingCoins] = useState<Set<string>>(new Set());
   const [token, setToken]                 = useState<string | null>(null);
   const [selectedCoin, setSelectedCoin]   = useState<CoinResult | null>(null);
   const [priceHistory, setPriceHistory]   = useState<{ x: number; y: number }[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [togglingCoins, setTogglingCoins] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    AsyncStorage.getItem('token').then(savedToken => {
-      setToken(savedToken);
-      if (savedToken) fetchWatchlist(savedToken);
-    });
-  }, []);
+  const isFollowing = (coinId: string) => watchlist.some(w => w.coin_id === coinId);
+
+  // Re-check token and watchlist every time tab is focused
+  useFocusEffect(
+    useCallback(() => {
+      AsyncStorage.getItem('token').then(savedToken => {
+        setToken(savedToken);
+        if (savedToken) {
+          fetchWatchlist(savedToken);
+        } else {
+          setWatchlist([]);
+        }
+      });
+    }, [])
+  );
 
   const fetchPrices = async () => {
     try {
@@ -148,47 +159,54 @@ export default function DashboardScreen() {
     }
   };
 
-  const toggleFollow = async (coinId: string) => {
-      if (!token) return;
-      if (togglingCoins.has(coinId)) return; // prevent double tap
+  const toggleFollow = async (coinId: string, thumb = '') => {
+    if (!token) return;
+    if (togglingCoins.has(coinId)) return;
 
-      const isFollowing = watchlist.includes(coinId);
+    const following = isFollowing(coinId);
 
-      // Optimistic update — change UI immediately before awaiting anything
-      setTogglingCoins(prev => new Set(prev).add(coinId));
-      setWatchlist(prev =>
-        isFollowing ? prev.filter(id => id !== coinId) : [...prev, coinId]
-      );
+    setTogglingCoins(prev => new Set(prev).add(coinId));
 
-      try {
-        if (isFollowing) {
-          await fetch(`${API}/watchlist/${coinId}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` },
-          });
-        } else {
-          await fetch(`${API}/watchlist`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ coin_id: coinId }),
-          });
-          fetchPrices(); // fire and forget — don't await, UI already updated
-        }
-      } catch (e) {
-        // Revert on failure
-        setWatchlist(prev =>
-          isFollowing ? [...prev, coinId] : prev.filter(id => id !== coinId)
-        );
-      } finally {
-        setTogglingCoins(prev => {
-          const next = new Set(prev);
-          next.delete(coinId);
-          return next;
+    // Optimistic update
+    setWatchlist(prev =>
+      following
+        ? prev.filter(w => w.coin_id !== coinId)
+        : [...prev, { coin_id: coinId, thumb }]
+    );
+
+    // Unblock button immediately
+    setTogglingCoins(prev => {
+      const next = new Set(prev);
+      next.delete(coinId);
+      return next;
+    });
+
+    try {
+      if (following) {
+        await fetch(`${API}/watchlist/${coinId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
         });
+      } else {
+        await fetch(`${API}/watchlist`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ coin_id: coinId, thumb }),
+        });
+        fetchPrices();
       }
-    };
+    } catch (e) {
+      // Revert on failure
+      setWatchlist(prev =>
+        following
+          ? [...prev, { coin_id: coinId, thumb }]
+          : prev.filter(w => w.coin_id !== coinId)
+      );
+    }
+  };
+
   const renderCoinRow = (coin: CoinResult, price?: number, showPrice = true) => {
-    const isFollowing = watchlist.includes(coin.id);
+    const following = isFollowing(coin.id);
     return (
       <TouchableOpacity key={coin.id} style={styles.card} onPress={() => openCoinModal(coin)}>
         <View style={styles.cardLeft}>
@@ -207,7 +225,7 @@ export default function DashboardScreen() {
               ? <Text style={styles.price}>${formatPrice(price)}</Text>
               : <ActivityIndicator size="small" color={Colors.primary} />
           )}
-          {isFollowing && <Text style={styles.followingBadge}>● Following</Text>}
+          {following && <Text style={styles.followingBadge}>● Following</Text>}
         </View>
       </TouchableOpacity>
     );
@@ -218,13 +236,13 @@ export default function DashboardScreen() {
     return { id, name: meta.label, symbol: meta.symbol, thumb: '' };
   });
 
-  const followedCoins: CoinResult[] = watchlist.map(id => {
-    const meta = COIN_META[id] ?? { label: id, symbol: id.toUpperCase() };
-    return { id, name: meta.label, symbol: meta.symbol, thumb: '' };
+  const followedCoins: CoinResult[] = watchlist.map(({ coin_id, thumb }) => {
+    const meta = COIN_META[coin_id] ?? { label: coin_id, symbol: coin_id.toUpperCase() };
+    return { id: coin_id, name: meta.label, symbol: meta.symbol, thumb };
   });
 
-  const followingResults = searchResults.filter(c => watchlist.includes(c.id));
-  const discoverResults  = searchResults.filter(c => !watchlist.includes(c.id));
+  const followingResults = searchResults.filter(c => isFollowing(c.id));
+  const discoverResults  = searchResults.filter(c => !isFollowing(c.id));
   const currentPrice     = selectedCoin ? prices[selectedCoin.id]?.usd : undefined;
 
   if (loading) return (
@@ -341,24 +359,22 @@ export default function DashboardScreen() {
                   </View>
                 ) : null}
 
-               {token ? (
+                {token ? (
                   <TouchableOpacity
                     style={[
                       styles.followButton,
-                      watchlist.includes(selectedCoin.id) && styles.unfollowButton,
+                      isFollowing(selectedCoin.id) && styles.unfollowButton,
                     ]}
-                    onPress={() => toggleFollow(selectedCoin.id)}
+                    onPress={() => toggleFollow(selectedCoin.id, selectedCoin.thumb)}
                     disabled={togglingCoins.has(selectedCoin.id)}
+                    activeOpacity={0.7}
                   >
-                    {togglingCoins.has(selectedCoin.id)
-                      ? <ActivityIndicator size="small" color={watchlist.includes(selectedCoin.id) ? Colors.error : '#000'} />
-                      : <Text style={[
-                          styles.followButtonText,
-                          watchlist.includes(selectedCoin.id) && { color: Colors.error }
-                        ]}>
-                          {watchlist.includes(selectedCoin.id) ? 'Unfollow' : '+ Follow'}
-                        </Text>
-                    }
+                    <Text style={[
+                      styles.followButtonText,
+                      isFollowing(selectedCoin.id) && { color: Colors.error }
+                    ]}>
+                      {isFollowing(selectedCoin.id) ? 'Unfollow' : '+ Follow'}
+                    </Text>
                   </TouchableOpacity>
                 ) : (
                   <Text style={styles.loginPrompt}>Sign in to follow currencies</Text>
