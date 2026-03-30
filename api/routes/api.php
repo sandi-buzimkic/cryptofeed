@@ -35,3 +35,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/watchlist', [WatchlistController::class, 'store']);
     Route::delete('/watchlist/{coinId}', [WatchlistController::class, 'destroy']);
 });
+Route::middleware('throttle:10,1')->group(function () {
+    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/register', [AuthController::class, 'register']);
+});
