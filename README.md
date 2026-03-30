@@ -2,9 +2,11 @@
 
 A full-stack mobile cryptocurrency tracking app. Users sign up, follow coins they care about, and see live prices alongside a 7-day price history chart — all backed by a containerised Laravel API with Redis caching to keep CoinGecko API usage efficient.
 
-![Dashboard](frontend/cryptofeed-mobile/assets/Dashboard1.jpg)
-![Dashboard](frontend/cryptofeed-mobile/assets/Modal.jpg)
-
+<p align="center">
+  <img src="frontend/cryptofeed-mobile/assets/Dashboard1.jpg" width="200" alt="Dashboard" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="frontend/cryptofeed-mobile/assets/Modal.jpg" width="200" alt="Modal" />
+</p>
 ---
 
 ## ✨ Features
